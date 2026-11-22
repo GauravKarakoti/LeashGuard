@@ -2,20 +2,22 @@
 
 > An AI agent that can pay your bills, but can’t drain your account—every limit is enforced on‑chain by a post‑quantum signature.
 
+[![Built on QoreChain](https://build.qorechain.io/badge/leashguard.svg)](https://build.qorechain.io/p/leashguard)
+
 ## What It Does
 LeashGuard is a **post‑quantum AI agent** for treasury management. The agent autonomously pays approved invoices and subscriptions, but its spending power is bounded by an on‑chain `AgentVault` contract. The owner uses their **ML‑DSA‑87 key** to set payees and limits; the agent uses a separate key that can only call `payBill`. Even if the agent’s classical key is stolen, the attacker cannot exceed the rules or pay an unapproved address.
 
 ## Architecture
-- **AgentVault.sol** – Solidity contract that stores approved payees, per‑tx limit, daily limit, and the owner’s PQC key hash.
-- **Agent (Node.js/TypeScript)** – Reads pending bills, simulates `payBill`, and broadcasts hybrid‑signed transactions using **QoreSign**.
-- **Owner Dashboard (React)** – Connects to QoreX, lets the owner update rules (each update requires an ML‑DSA‑87 signature) and view the agent’s activity.
+- **AgentVault.sol** – Stores payees, per‑tx limit, daily limit, and owner PQC key hash.
+- **AI Agent (Node.js/TS)** – Reads invoices, simulates `payBill`, signs hybridly with QoreSign, broadcasts.
+- **Owner Dashboard (React)** – QoreX wallet integration; approve payees; update rules (PQC‑signed).
 
 ## Built With
-- **QoreChain SDK** (TypeScript, React)
-- **QoreSign** (TypeScript)
-- **create‑qorechain‑dapp**
-- **QoreX integrations**
-- **Foundry** (for contract tests)
+- QoreChain SDK (TypeScript, React)
+- QoreSign
+- create‑qorechain‑dapp
+- QoreX integrations
+- Hardhat (contract tests)
 
 ## Network Features Used
 - Hybrid ML‑DSA‑87 transactions
@@ -33,13 +35,13 @@ LeashGuard is a **post‑quantum AI agent** for treasury management. The agent a
 6. Start the dashboard: `npm run dev`
 
 ## Q‑Day Drill Proof
-During the Q‑Day Drill (18 Nov 2026), we will:
-- Register a fresh testnet account as the drill account.
-- Make a `payBill` transaction that is hybrid‑signed.
-- Demonstrate that an attacker holding only the classical ECDSA key **cannot** change the vault’s rules or pay an unapproved payee.
+During the drill, we will show that a stolen classical key cannot:
+1. Open or modify the EVM window.
+2. Change the vault’s spending rules.
+3. Pay an unapproved payee.
 
 ## AI Usage
 See [AI_USAGE.md](./AI_USAGE.md) for a full description of how AI tools were used during development.
 
 ## Licence
-MIT (or Apache‑2.0). See [LICENSE](./LICENSE).
+MIT - See [LICENSE](./LICENSE).
