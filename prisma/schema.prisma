@@ -1,0 +1,44 @@
+// use prisma-8
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  FAILED
+  INSUFFICIENT_FUNDS
+}
+
+model UserFunding {
+  id               String           @id @onCreate(cuid(2))
+  userAddress      String           @unique
+  fundedBalanceWei String           @default("0")
+  spentBalanceWei  String           @default("0")
+  updatedAt        DateTime         @onUpdate(now())
+  invoices         Invoice[]
+  deposits         FundingDeposit[]
+}
+
+model FundingDeposit {
+  id          String      @id @onCreate(cuid(2))
+  txHash      String      @unique
+  userAddress String
+  amountWei   String
+  createdAt   DateTime    @default(now())
+
+  user        UserFunding @relation(fields: [userAddress], references: [userAddress])
+}
+
+model Invoice {
+  id          String        @id @onCreate(cuid(2))
+  invoiceId   String        @unique
+  userAddress String
+  payee       String
+  amountWei   String
+  status      InvoiceStatus @default(PENDING)
+  txHash      String?
+  errorReason String?
+  paidAt      DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @onUpdate(now())
+
+  user        UserFunding   @relation(fields: [userAddress], references: [userAddress])
+}
