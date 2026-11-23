@@ -7,38 +7,60 @@ enum InvoiceStatus {
   INSUFFICIENT_FUNDS
 }
 
+model AgentBot {
+  id                String           @id @onCreate(cuid(2))
+  vaultAddress      String           @unique
+  ownerAddress      String
+  botAddress        String
+  encryptedMnemonic String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @onUpdate(now())
+  fundings          UserFunding[]
+  deposits          FundingDeposit[]
+  invoices          Invoice[]
+}
+
 model UserFunding {
   id               String           @id @onCreate(cuid(2))
-  userAddress      String           @unique
+  vaultAddress     String
+  userAddress      String
   fundedBalanceWei String           @default("0")
   spentBalanceWei  String           @default("0")
   updatedAt        DateTime         @onUpdate(now())
+
+  vault            AgentBot         @relation(fields: [vaultAddress], references: [vaultAddress])
   invoices         Invoice[]
   deposits         FundingDeposit[]
+
+  @@unique([vaultAddress, userAddress])
 }
 
 model FundingDeposit {
-  id          String      @id @onCreate(cuid(2))
-  txHash      String      @unique
-  userAddress String
-  amountWei   String
-  createdAt   DateTime    @default(now())
+  id           String      @id @onCreate(cuid(2))
+  txHash       String      @unique
+  vaultAddress String
+  userAddress  String
+  amountWei    String
+  createdAt    DateTime    @default(now())
 
-  user        UserFunding @relation(fields: [userAddress], references: [userAddress])
+  vault        AgentBot    @relation(fields: [vaultAddress], references: [vaultAddress])
+  user         UserFunding @relation(fields: [vaultAddress, userAddress], references: [vaultAddress, userAddress])
 }
 
 model Invoice {
-  id          String        @id @onCreate(cuid(2))
-  invoiceId   String        @unique
-  userAddress String
-  payee       String
-  amountWei   String
-  status      InvoiceStatus @default(PENDING)
-  txHash      String?
-  errorReason String?
-  paidAt      DateTime?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @onUpdate(now())
+  id           String        @id @onCreate(cuid(2))
+  invoiceId    String        @unique
+  vaultAddress String
+  userAddress  String
+  payee        String
+  amountWei    String
+  status       InvoiceStatus @default(PENDING)
+  txHash       String?
+  errorReason  String?
+  paidAt       DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @onUpdate(now())
 
-  user        UserFunding   @relation(fields: [userAddress], references: [userAddress])
+  vault        AgentBot      @relation(fields: [vaultAddress], references: [vaultAddress])
+  user         UserFunding   @relation(fields: [vaultAddress, userAddress], references: [vaultAddress, userAddress])
 }

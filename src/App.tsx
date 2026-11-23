@@ -1,32 +1,49 @@
-import { useMemo, useRef, useState } from "react";
-import { useAccount, useDisconnect, useReadContract, useReadContracts } from "wagmi";
-import { formatEther, formatUnits, type Abi, type Address } from "viem";
-import { createClient, fromBase, type QoreChainClient } from "@qorechain/sdk";
-import { createEvmClient, erc20, type Erc20Metadata } from "@qorechain/evm";
+import { useEffect, useMemo, useState } from "react";
+import {
+  useAccount,
+  useDisconnect,
+  useReadContract,
+  useReadContracts,
+  useSendTransaction,
+  useWalletClient,
+} from "wagmi";
+import {
+  formatEther,
+  formatUnits,
+  isAddress,
+  parseEther,
+  type Abi,
+  type Address,
+  type Hex,
+} from "viem";
+import { english, generateMnemonic, mnemonicToAccount } from "viem/accounts";
+import {
+  createClient,
+  evmToQor,
+  fromBase,
+  type QoreChainClient,
+} from "@qorechain/sdk";
+import {
+  createEvmClient,
+  deployContract,
+  erc20,
+  type Erc20Metadata,
+} from "@qorechain/evm";
 
-import deployment from "../deployment/agent-vault.deployment.json";
 import AgentVault from "../artifacts/contracts/AgentVault.sol/AgentVault.json";
 import { useQoreX } from "./hooks/useQoreX";
 import { PayeeManager } from "./components/PayeeManager";
 import { RulesEditor } from "./components/RulesEditor";
 import { PaymentFeed } from "./components/PaymentFeed";
 
-// ---- Config ---------------------------------------------------------------
-
-const VAULT_ADDRESS = (deployment.address || "") as Address;
-
-const VAULT_ABI = (
-  Array.isArray(deployment.abi) && deployment.abi.length > 0
-    ? deployment.abi
-    : AgentVault.abi
-) as Abi;
+const VAULT_ABI = AgentVault.abi as Abi;
+const VAULT_BYTECODE = AgentVault.bytecode as Hex;
 
 const REST_URL = import.meta.env.VITE_QORE_REST_URL ?? "/lcd";
 const EVM_RPC_URL =
   import.meta.env.VITE_QORE_EVM_RPC_URL ?? "http://localhost:8545";
-
-const ZERO_HASH =
-  "0x0000000000000000000000000000000000000000000000000000000000000000" as const;
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3001";
 
 interface NativeBalance {
   denom: string;
@@ -34,6 +51,33 @@ interface NativeBalance {
 }
 
 type TokenMetaMap = Record<string, Erc20Metadata>;
+
+interface FundingSummary {
+  vaultAddress: string;
+  userAddress: string;
+  fundedBalanceWei: string;
+  spentBalanceWei: string;
+  remainingBalanceWei: string;
+}
+
+interface GeneratedBotCredentials {
+  botAddress: Address;
+  botQorAddress: string;
+  botMnemonic: string;
+}
+
+function vaultStorageKey(ownerAddr: string): string {
+  return `leashguard:vault:${ownerAddr.toLowerCase()}`;
+}
+
+function safeEvmToQor(evmAddr?: string): string {
+  if (!evmAddr || !isAddress(evmAddr)) return "";
+  try {
+    return evmToQor(evmAddr);
+  } catch {
+    return "";
+  }
+}
 
 function formatChainBalance(
   b: NativeBalance,
@@ -74,12 +118,56 @@ function formatChainBalance(
   };
 }
 
-// ---- App ------------------------------------------------------------------
-
 export default function App() {
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const { connectQoreX } = useQoreX();
+
+  const [myVaultAddress, setMyVaultAddress] = useState<Address | null>(null);
+
+  useEffect(() => {
+    if (!isConnected || !address) {
+      setMyVaultAddress(null);
+      return;
+    }
+
+    const normOwner = address.toLowerCase();
+    const cached = window.localStorage.getItem(vaultStorageKey(normOwner));
+    if (cached && isAddress(cached)) {
+      setMyVaultAddress(cached as Address);
+    } else {
+      setMyVaultAddress(null);
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/agents?ownerAddress=${encodeURIComponent(normOwner)}`,
+        );
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          agents?: Array<{ vaultAddress: string; ownerAddress: string }>;
+        };
+        const owned = data.agents?.find(
+          (a) =>
+            a.ownerAddress.toLowerCase() === normOwner &&
+            isAddress(a.vaultAddress),
+        );
+        if (!cancelled && owned) {
+          const addr = owned.vaultAddress as Address;
+          window.localStorage.setItem(vaultStorageKey(normOwner), addr);
+          setMyVaultAddress(addr);
+        }
+      } catch {
+        // Keep local cache if backend is unreachable
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [address, isConnected]);
 
   const qoreClient: QoreChainClient = useMemo(
     () =>
@@ -91,24 +179,26 @@ export default function App() {
   );
 
   const { data: owner } = useReadContract({
-    address: VAULT_ADDRESS,
+    address: myVaultAddress ?? undefined,
     abi: VAULT_ABI,
     functionName: "owner",
-    query: { enabled: Boolean(VAULT_ADDRESS) },
+    query: { enabled: Boolean(myVaultAddress) },
   });
 
-  const isOwner =
+  const isOwner = Boolean(
     isConnected &&
-    address &&
-    owner &&
-    address.toLowerCase() === (owner as string).toLowerCase();
+      address &&
+      myVaultAddress &&
+      owner &&
+      address.toLowerCase() === (owner as string).toLowerCase(),
+  );
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
+    <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
       <Header
         isConnected={isConnected}
         address={address}
-        isOwner={Boolean(isOwner)}
+        isOwner={isOwner}
         networkName={qoreClient.network.name}
         chainId={qoreClient.network.chainId}
         onConnect={() => {
@@ -117,28 +207,38 @@ export default function App() {
         onDisconnect={() => disconnect()}
       />
 
-      <main className="mx-20 space-y-6 px-4 py-8">
-        {!VAULT_ADDRESS && <MissingVaultBanner />}
+      <main className="mx-20 flex-1 space-y-6 px-4 py-8">
+        <PersonalAgentDeployer
+          isConnected={isConnected}
+          connectedAddress={address}
+          myVaultAddress={myVaultAddress}
+          onVaultDeployed={(addr) => {
+            if (address) {
+              window.localStorage.setItem(vaultStorageKey(address), addr);
+            }
+            setMyVaultAddress(addr);
+          }}
+          apiBaseUrl={API_BASE_URL}
+          evmRpcUrl={EVM_RPC_URL}
+        />
 
-        {VAULT_ADDRESS && (
+        {isConnected && address && myVaultAddress && isOwner && (
           <>
-            <VaultOverview
-              vaultAddress={VAULT_ADDRESS}
-              isOwner={Boolean(isOwner)}
-            />
+            <VaultOverview vaultAddress={myVaultAddress} isOwner={isOwner} />
 
             <div className="grid gap-6 md:grid-cols-2">
-              <RulesEditor
-                vaultAddress={VAULT_ADDRESS}
-                canEdit={Boolean(isOwner)}
-              />
-              <PayeeManager
-                vaultAddress={VAULT_ADDRESS}
-                canEdit={Boolean(isOwner)}
-              />
+              <RulesEditor vaultAddress={myVaultAddress} canEdit={isOwner} />
+              <PayeeManager vaultAddress={myVaultAddress} canEdit={isOwner} />
             </div>
 
-            <PaymentFeed vaultAddress={VAULT_ADDRESS} />
+            <FundingAndInvoicesPanel
+              vaultAddress={myVaultAddress}
+              connectedAddress={address}
+              apiBaseUrl={API_BASE_URL}
+              evmRpcUrl={EVM_RPC_URL}
+            />
+
+            <PaymentFeed vaultAddress={myVaultAddress} />
           </>
         )}
 
@@ -154,7 +254,502 @@ export default function App() {
   );
 }
 
-// ---- Header ---------------------------------------------------------------
+function PersonalAgentDeployer({
+  isConnected,
+  connectedAddress,
+  myVaultAddress,
+  onVaultDeployed,
+  apiBaseUrl,
+  evmRpcUrl,
+}: {
+  isConnected: boolean;
+  connectedAddress?: Address;
+  myVaultAddress: Address | null;
+  onVaultDeployed: (addr: Address) => void;
+  apiBaseUrl: string;
+  evmRpcUrl: string;
+}) {
+  const { data: walletClient } = useWalletClient();
+  const [perTxQor, setPerTxQor] = useState("0.5");
+  const [dailyQor, setDailyQor] = useState("5");
+  const [generatedBot, setGeneratedBot] =
+    useState<GeneratedBotCredentials | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function handleDeployPersonalVault(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg(null);
+    setErr(null);
+
+    if (!isConnected || !connectedAddress || !walletClient) {
+      setErr("Connect QoreX first to deploy your private AgentVault.");
+      return;
+    }
+
+    let txLimitWei: bigint;
+    let dayLimitWei: bigint;
+    try {
+      txLimitWei = parseEther(perTxQor.trim() || "0.5");
+      dayLimitWei = parseEther(dailyQor.trim() || "5");
+      if (txLimitWei <= 0n || dayLimitWei < txLimitWei) {
+        setErr(
+          "Limits must be positive and daily limit must be >= per-tx limit.",
+        );
+        return;
+      }
+    } catch {
+      setErr("Enter valid numeric QOR limits.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const randomMnemonic = generateMnemonic(english, 128);
+      const randomBotAccount = mnemonicToAccount(randomMnemonic, {
+        addressIndex: 0,
+      });
+      const botAddr = randomBotAccount.address.toLowerCase() as Address;
+      const botQorAddr = safeEvmToQor(botAddr);
+
+      const txHash = await deployContract(walletClient, {
+        abi: VAULT_ABI,
+        bytecode: VAULT_BYTECODE,
+        args: [connectedAddress, botAddr, txLimitWei, dayLimitWei],
+      });
+
+      const evmClient = await createEvmClient({
+        endpoints: { evmRpc: evmRpcUrl },
+      });
+      const receipt = await evmClient.publicClient.waitForTransactionReceipt({
+        hash: txHash,
+      });
+
+      if (!receipt.contractAddress) {
+        throw new Error("Deployment receipt missing contractAddress");
+      }
+
+      const deployedAddr = receipt.contractAddress.toLowerCase() as Address;
+
+      const regRes = await fetch(`${apiBaseUrl}/api/agents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vaultAddress: deployedAddr,
+          ownerAddress: connectedAddress.toLowerCase(),
+          botAddress: botAddr,
+          botMnemonic: randomMnemonic,
+        }),
+      });
+
+      if (!regRes.ok) {
+        const regData = await regRes.json().catch(() => ({}));
+        throw new Error(regData.error ?? "Failed to register vault in DB");
+      }
+
+      setGeneratedBot({
+        botAddress: botAddr,
+        botQorAddress: botQorAddr,
+        botMnemonic: randomMnemonic,
+      });
+      onVaultDeployed(deployedAddr);
+      setMsg(`Your private vault is live at ${deployedAddr}`);
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-5">
+      <h2 className="text-base font-semibold">Your Private Agent Vault</h2>
+      <p className="text-xs text-slate-400">
+        Deploy your isolated <code>AgentVault</code> and generate your own bot
+        wallet (`qor1...` and `0x...`).
+      </p>
+
+      {!isConnected || !connectedAddress ? (
+        <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-400">
+          Connect your QoreX wallet to deploy or access your personal vault.
+        </div>
+      ) : (
+        <>
+          {myVaultAddress ? (
+            <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">
+              Your Vault: <span className="font-mono">{myVaultAddress}</span>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">
+              No personal vault found for{" "}
+              <span className="font-mono">{shortAddr(connectedAddress)}</span>.
+              Deploy your own vault below to unlock treasury controls.
+            </div>
+          )}
+
+          {generatedBot && (
+            <div className="mt-4 space-y-2 rounded-lg border border-emerald-500/40 bg-slate-950 p-4 text-xs">
+              <div className="font-semibold text-emerald-400">
+                Generated Bot Credentials (Save these securely)
+              </div>
+              <div>
+                <span className="text-slate-400">Bot Native (qor1) Address: </span>
+                <code className="font-mono text-emerald-300">
+                  {generatedBot.botQorAddress || "—"}
+                </code>
+              </div>
+              <div>
+                <span className="text-slate-400">Bot EVM (0x) Address: </span>
+                <code className="font-mono text-slate-100">
+                  {generatedBot.botAddress}
+                </code>
+              </div>
+              <div>
+                <span className="text-slate-400">Bot Mnemonic: </span>
+                <code className="break-all font-mono text-amber-200">
+                  {generatedBot.botMnemonic}
+                </code>
+              </div>
+            </div>
+          )}
+
+          <form
+            onSubmit={handleDeployPersonalVault}
+            className="mt-4 grid gap-3 sm:grid-cols-3"
+          >
+            <label className="block text-xs">
+              <span className="text-slate-400">Owner Address (Connected)</span>
+              <input
+                value={connectedAddress}
+                readOnly
+                disabled
+                className="mt-1 w-full cursor-not-allowed rounded-md border border-slate-800 bg-slate-950/70 px-3 py-2 font-mono text-xs text-slate-400"
+              />
+            </label>
+            <label className="block text-xs">
+              <span className="text-slate-400">Per-tx Limit (QOR)</span>
+              <input
+                value={perTxQor}
+                onChange={(e) => setPerTxQor(e.target.value)}
+                inputMode="decimal"
+                disabled={busy}
+                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+              />
+            </label>
+            <label className="block text-xs">
+              <span className="text-slate-400">Daily Limit (QOR)</span>
+              <input
+                value={dailyQor}
+                onChange={(e) => setDailyQor(e.target.value)}
+                inputMode="decimal"
+                disabled={busy}
+                className="mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100"
+              />
+            </label>
+            <div className="sm:col-span-3">
+              <button
+                type="submit"
+                disabled={busy}
+                className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-40"
+              >
+                {busy
+                  ? "Deploying & Generating Bot…"
+                  : myVaultAddress
+                    ? "Deploy Another Personal Vault"
+                    : "Deploy My Agent Vault"}
+              </button>
+            </div>
+          </form>
+        </>
+      )}
+
+      {msg && <p className="mt-3 text-xs text-emerald-400">{msg}</p>}
+      {err && (
+        <p role="alert" className="mt-3 text-xs text-rose-400">
+          {err}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function FundingAndInvoicesPanel({
+  vaultAddress,
+  connectedAddress,
+  apiBaseUrl,
+  evmRpcUrl,
+}: {
+  vaultAddress: Address;
+  connectedAddress: Address;
+  apiBaseUrl: string;
+  evmRpcUrl: string;
+}) {
+  const { sendTransactionAsync } = useSendTransaction();
+
+  const [directDepositQor, setDirectDepositQor] = useState("1");
+  const [summary, setSummary] = useState<FundingSummary | null>(null);
+
+  const [invoiceId, setInvoiceId] = useState("");
+  const [payee, setPayee] = useState("");
+  const [amountQor, setAmountQor] = useState("");
+
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const normVault = vaultAddress.toLowerCase() as Address;
+  const normUser = connectedAddress.toLowerCase();
+
+  async function creditTxHashToBackend(txHash: string): Promise<void> {
+    const res = await fetch(`${apiBaseUrl}/api/funding`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        vaultAddress: normVault,
+        userAddress: normUser,
+        txHash: txHash.trim(),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error ?? "Failed to credit funding");
+    }
+    setSummary(data.funding as FundingSummary);
+    setStatusMsg(
+      `Credited ${formatEther(BigInt(data.creditedWei))} QOR to your bot balance.`,
+    );
+  }
+
+  async function refreshFunding(): Promise<void> {
+    setErrorMsg(null);
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `${apiBaseUrl}/api/funding/${normVault}/${normUser}`,
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error ?? "Failed to load funding balance");
+      }
+      setSummary(data as FundingSummary);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDirectDeposit(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    setErrorMsg(null);
+    setStatusMsg(null);
+
+    let valueWei: bigint;
+    try {
+      valueWei = parseEther(directDepositQor.trim());
+      if (valueWei <= 0n) {
+        setErrorMsg("Deposit amount must be greater than 0.");
+        return;
+      }
+    } catch {
+      setErrorMsg("Enter a valid QOR deposit amount.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const sentHash = await sendTransactionAsync({
+        to: normVault,
+        value: valueWei,
+      });
+
+      const evmClient = await createEvmClient({
+        endpoints: { evmRpc: evmRpcUrl },
+      });
+      await evmClient.publicClient.waitForTransactionReceipt({
+        hash: sentHash,
+      });
+
+      await creditTxHashToBackend(sentHash);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCreateInvoice(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    setErrorMsg(null);
+    setStatusMsg(null);
+
+    if (!invoiceId.trim()) {
+      setErrorMsg("Enter an invoice ID.");
+      return;
+    }
+    if (!isAddress(payee.trim())) {
+      setErrorMsg("Enter a valid payee EVM address.");
+      return;
+    }
+
+    let amountWeiStr: string;
+    try {
+      const wei = parseEther(amountQor.trim());
+      if (wei <= 0n) {
+        setErrorMsg("Invoice amount must be greater than 0.");
+        return;
+      }
+      amountWeiStr = wei.toString();
+    } catch {
+      setErrorMsg("Invalid QOR amount.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/invoices`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invoiceId: invoiceId.trim(),
+          vaultAddress: normVault,
+          userAddress: normUser,
+          payee: payee.trim(),
+          amountWei: amountWeiStr,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error ?? "Failed to create invoice");
+      }
+      setInvoiceId("");
+      setPayee("");
+      setAmountQor("");
+      setStatusMsg(`Queued invoice ${data.invoice.invoiceId} for your bot.`);
+      await refreshFunding();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-semibold">Bot Funding & Invoices</h2>
+          <p className="text-xs text-slate-400">
+            Deposit QOR directly into vault{" "}
+            <code className="font-mono text-slate-300">
+              {shortAddr(vaultAddress)}
+            </code>{" "}
+            or credit an existing tx hash.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            void refreshFunding();
+          }}
+          disabled={busy}
+          className="rounded-md border border-slate-700 bg-slate-950/70 px-3 py-1.5 text-xs font-medium text-slate-200 hover:border-slate-500 disabled:opacity-50"
+        >
+          Refresh Balance
+        </button>
+      </div>
+
+      {summary && (
+        <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
+          <Stat
+            label="Funded"
+            value={`${formatEther(BigInt(summary.fundedBalanceWei))} QOR`}
+          />
+          <Stat
+            label="Spent"
+            value={`${formatEther(BigInt(summary.spentBalanceWei))} QOR`}
+          />
+          <Stat
+            label="Remaining"
+            value={`${formatEther(BigInt(summary.remainingBalanceWei))} QOR`}
+          />
+        </div>
+      )}
+
+      <div className="mt-5 grid gap-6 md:grid-cols-2">
+        <div className="space-y-5">
+          <form onSubmit={handleDirectDeposit} className="space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              Direct QOR Deposit
+            </h3>
+            <div className="flex gap-2">
+              <input
+                value={directDepositQor}
+                onChange={(e) => setDirectDepositQor(e.target.value)}
+                inputMode="decimal"
+                placeholder="Amount in QOR (e.g. 1.0)"
+                disabled={busy}
+                className="flex-1 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 disabled:opacity-50"
+              />
+              <button
+                type="submit"
+                disabled={busy}
+                className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-40"
+              >
+                {busy ? "Sending…" : "Deposit QOR"}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <form onSubmit={handleCreateInvoice} className="space-y-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Submit Invoice
+          </h3>
+          <input
+            value={invoiceId}
+            onChange={(e) => setInvoiceId(e.target.value)}
+            placeholder="INV-2026-001"
+            disabled={busy}
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 placeholder:text-slate-500 disabled:opacity-50"
+          />
+          <input
+            value={payee}
+            onChange={(e) => setPayee(e.target.value)}
+            placeholder="0x… payee address"
+            disabled={busy}
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-slate-100 placeholder:text-slate-500 disabled:opacity-50"
+          />
+          <input
+            value={amountQor}
+            onChange={(e) => setAmountQor(e.target.value)}
+            inputMode="decimal"
+            placeholder="0.25 (QOR)"
+            disabled={busy}
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 disabled:opacity-50"
+          />
+          <button
+            type="submit"
+            disabled={busy}
+            className="w-full rounded-md border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-sm font-medium text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-40"
+          >
+            Queue Invoice
+          </button>
+        </form>
+      </div>
+
+      {statusMsg && (
+        <p className="mt-3 text-xs text-emerald-400">{statusMsg}</p>
+      )}
+      {errorMsg && (
+        <p role="alert" className="mt-3 text-xs text-rose-400">
+          {errorMsg}
+        </p>
+      )}
+    </section>
+  );
+}
 
 function Header({
   isConnected,
@@ -177,8 +772,8 @@ function Header({
     <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur">
       <div className="mx-20 flex items-center justify-between gap-4 px-4 py-4">
         <div className="flex items-center gap-3">
-          <div className="grid h-12 w-12 place-items-center rounded-lg font-black text-slate-950">
-            <img src="/logo.png" alt="Logo" />
+          <div className="grid h-9 w-9 place-items-center rounded-lg bg-emerald-500 font-black text-slate-950">
+            LG
           </div>
           <div>
             <h1 className="text-lg font-semibold leading-tight">LeashGuard</h1>
@@ -198,8 +793,8 @@ function Header({
             </span>
           )}
           {isConnected && !isOwner && (
-            <span className="rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400 ring-1 ring-amber-500/30">
-              Viewer
+            <span className="rounded-full bg-slate-700/40 px-3 py-1 text-xs font-medium text-slate-300 ring-1 ring-slate-600/40">
+              No Vault Yet
             </span>
           )}
 
@@ -225,8 +820,6 @@ function Header({
   );
 }
 
-// ---- Overview -------------------------------------------------------------
-
 function VaultOverview({
   vaultAddress,
   isOwner,
@@ -241,20 +834,14 @@ function VaultOverview({
       { address: vaultAddress, abi: VAULT_ABI, functionName: "perTxLimit" },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "dailyLimit" },
       { address: vaultAddress, abi: VAULT_ABI, functionName: "spentToday" },
-      {
-        address: vaultAddress,
-        abi: VAULT_ABI,
-        functionName: "ownerPqcKeyHash",
-      },
     ],
     query: { refetchInterval: 8_000 },
   });
 
-  const [, agent, perTxLimit, dailyLimit, spentToday, pqcHash] =
+  const [, agent, perTxLimit, dailyLimit, spentToday] =
     data?.map((r) => r.result) ?? [];
 
-  const pqcRegistered =
-    typeof pqcHash === "string" && pqcHash !== ZERO_HASH;
+  const botQor = safeEvmToQor(agent as string | undefined);
 
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-5">
@@ -264,7 +851,6 @@ function VaultOverview({
           <p className="font-mono text-xs text-slate-400">{vaultAddress}</p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
-          <Pill ok={pqcRegistered} label="PQC key" />
           <Pill ok={isOwner} label="You are owner" />
         </div>
       </div>
@@ -273,7 +859,11 @@ function VaultOverview({
         <Skeleton />
       ) : (
         <div className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-          <Stat label="Agent" value={shortAddr(agent as Address)} mono />
+          <Stat
+            label="Bot Agent (qor1)"
+            value={botQor ?? shortAddr(agent as Address)}
+            mono
+          />
           <Stat
             label="Per‑tx limit"
             value={`${formatEther((perTxLimit as bigint) ?? 0n)} QOR`}
@@ -292,8 +882,6 @@ function VaultOverview({
   );
 }
 
-// ---- Native Chain Inspector -----------------------------------------------
-
 function ChainInspector({
   client,
   restUrl,
@@ -310,11 +898,9 @@ function ChainInspector({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const publicClientRef = useRef<Awaited<ReturnType<typeof createEvmClient>>["publicClient"] | null>(
-    null,
-  );
-
-  async function resolveErc20Metadata(items: NativeBalance[]): Promise<TokenMetaMap> {
+  async function resolveErc20Metadata(
+    items: NativeBalance[],
+  ): Promise<TokenMetaMap> {
     const erc20Addrs = items
       .filter((b) => b.denom.startsWith("erc20:"))
       .map((b) => b.denom.slice("erc20:".length).toLowerCase())
@@ -325,18 +911,15 @@ function ChainInspector({
       return erc20MetaMap;
     }
 
-    if (!publicClientRef.current) {
-      const evmClient = await createEvmClient({
-        endpoints: { evmRpc: evmRpcUrl },
-      });
-      publicClientRef.current = evmClient.publicClient;
-    }
+    const evmClient = await createEvmClient({
+      endpoints: { evmRpc: evmRpcUrl },
+    });
 
     const entries = await Promise.all(
       missing.map(async (addr) => {
         try {
           const meta = await erc20.metadata(
-            publicClientRef.current!,
+            evmClient.publicClient,
             addr as Address,
           );
           return [addr, meta] as const;
@@ -397,7 +980,8 @@ function ChainInspector({
         <div>
           <h2 className="text-base font-semibold">Native Chain Inspector</h2>
           <p className="text-xs text-slate-400">
-            REST endpoint: <code className="font-mono text-slate-300">{restUrl}</code>
+            REST endpoint:{" "}
+            <code className="font-mono text-slate-300">{restUrl}</code>
           </p>
         </div>
         <button
@@ -466,16 +1050,6 @@ function ChainInspector({
   );
 }
 
-// ---- Utilities ------------------------------------------------------------
-
-function MissingVaultBanner() {
-  return (
-    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-200">
-      <strong>No vault configured.</strong> Deploy <code>AgentVault</code> and reload.
-    </div>
-  );
-}
-
 function Pill({ ok, label }: { ok: boolean; label: string }) {
   return (
     <span
@@ -527,7 +1101,7 @@ function Skeleton() {
 
 function Footer() {
   return (
-    <footer className="border-t border-slate-800 py-6 text-center text-xs text-slate-500">
+    <footer className="mt-auto border-t border-slate-800 py-6 text-center text-xs text-slate-500">
       Built for{" "}
       <span className="text-slate-300">Build Before Q-Day</span> · QoreChain Diana
       testnet

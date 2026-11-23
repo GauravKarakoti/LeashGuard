@@ -1,12 +1,17 @@
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { db } from "../../prisma/db";
+import { decryptMnemonic } from "../server/index";
 import { createClient, deriveEvmAccount } from "@qorechain/sdk";
-import { createEvmClient, evmAccountFromPrivateKey } from "@qorechain/evm";
+import {
+  createEvmClient,
+  evmAccountFromPrivateKey,
+  type EvmClient,
+} from "@qorechain/evm";
 import { parseEther, isAddress, toHex, type Abi, type Hex } from "viem";
 import AgentVault from "../../artifacts/contracts/AgentVault.sol/AgentVault.json";
-import { pathToFileURL } from "node:url";
 
 const DEPLOYMENT_FILE = path.resolve(
   process.cwd(),
@@ -22,6 +27,8 @@ const InvoiceStatus = {
 
 export interface ApiInvoice {
   invoiceId: string;
+  vaultAddress: string;
+  botAddress?: string | null;
   userAddress: string;
   payee: string;
   amountQor?: string;
@@ -33,11 +40,11 @@ export function loadVaultDeployment() {
   if (fs.existsSync(DEPLOYMENT_FILE)) {
     fileData = JSON.parse(fs.readFileSync(DEPLOYMENT_FILE, "utf-8"));
   }
-  const address = (fileData.address) as `0x${string}` | undefined;
+  const address = fileData.address as `0x${string}` | undefined;
 
   if (!address) {
     throw new Error(
-      "Vault address not found. Run deploy script.",
+      "Vault address not found. Run deploy script or set AGENT_VAULT_ADDRESS.",
     );
   }
 
@@ -49,22 +56,25 @@ export function loadVaultDeployment() {
   };
 }
 
+function getVaultAbi(): Abi {
+  const { abi } = loadVaultDeployment();
+  return abi;
+}
+
 function parseInvoiceAmountWei(inv: ApiInvoice): bigint {
-  if (inv.amountWei !== undefined) {
+  if (inv.amountWei !== undefined && inv.amountWei !== "") {
     return BigInt(inv.amountWei);
   }
-  if (inv.amountQor !== undefined) {
+  if (inv.amountQor !== undefined && inv.amountQor !== "") {
     return parseEther(inv.amountQor);
   }
   throw new Error(`Invoice ${inv.invoiceId} is missing amountQor or amountWei.`);
 }
 
 async function fetchPendingInvoicesFromApi(): Promise<ApiInvoice[]> {
-  const apiUrl = process.env.INVOICES_API_URL;
+  const apiUrl = process.env.VITE_API_BASE_URL;
   if (!apiUrl) {
-    throw new Error(
-      "Missing INVOICES_API_URL (e.g. http://localhost:3000/api/invoices/pending).",
-    );
+    throw new Error("Missing VITE_API_BASE_URL.");
   }
 
   const headers: Record<string, string> = {
@@ -87,59 +97,56 @@ async function fetchPendingInvoicesFromApi(): Promise<ApiInvoice[]> {
   return Array.isArray(payload) ? payload : (payload.invoices ?? []);
 }
 
-async function processInvoices() {
-  const mnemonic = process.env.AGENT_MNEMONIC;
-  if (!mnemonic) {
-    throw new Error("Missing AGENT_MNEMONIC in .env.");
+async function getMnemonicForVault(
+  vaultAddress: string,
+): Promise<string | undefined> {
+  const normVault = vaultAddress.toLowerCase();
+  const botRecord = await db.orm.public.AgentBot
+    .where({ vaultAddress: normVault })
+    .first();
+
+  if (botRecord?.encryptedMnemonic) {
+    return decryptMnemonic(botRecord.encryptedMnemonic);
   }
 
-  const { address: vaultAddress, abi: vaultAbi } = loadVaultDeployment();
+  return process.env.AGENT_MNEMONIC;
+}
+
+async function processInvoices() {
+  const evmRpcUrl = process.env.VITE_QORE_EVM_RPC_URL;
+  if (!evmRpcUrl) {
+    throw new Error("Missing VITE_QORE_EVM_RPC_URL in .env.");
+  }
 
   createClient({
     network: "testnet",
     endpoints: {
-      rest: process.env.VITE_QORE_REST_URL,
+      rest: process.env.QORE_REST_URL,
       rpc: process.env.QORE_RPC_URL,
-      evmRpc: process.env.VITE_QORE_EVM_RPC_URL,
+      evmRpc: evmRpcUrl,
     },
   });
 
-  const evmRpcUrl = process.env.VITE_QORE_EVM_RPC_URL;
-  if (!evmRpcUrl) {
-    throw new Error(
-      "Missing VITE_QORE_EVM_RPC_URL in .env.",
-    );
-  }
-  const evmClient = await createEvmClient({
+  const evmClient: EvmClient = await createEvmClient({
     endpoints: { evmRpc: evmRpcUrl },
   });
 
-  const derivedEvm = await deriveEvmAccount(mnemonic);
-  const privateKeyHex = toHex(derivedEvm.privateKey) as Hex;
-  const agentAccount = evmAccountFromPrivateKey(privateKeyHex);
-  const walletClient = evmClient.getWalletClient(agentAccount);
-
+  const vaultAbi = getVaultAbi();
   const apiInvoices = await fetchPendingInvoicesFromApi();
 
+  const signerCache = new Map<
+    string,
+    {
+      agentAccount: ReturnType<typeof evmAccountFromPrivateKey>;
+      walletClient: ReturnType<EvmClient["getWalletClient"]>;
+    }
+  >();
+
   for (const rawInv of apiInvoices) {
-    const normalizedUser = rawInv.userAddress.toLowerCase();
+    const normVault = rawInv.vaultAddress.toLowerCase() as `0x${string}`;
+    const normUser = rawInv.userAddress.toLowerCase();
     const amountWei = parseInvoiceAmountWei(rawInv);
 
-    // Ensure UserFunding row exists so foreign key constraints are satisfied
-    let funding = await db.orm.public.UserFunding
-      .where({ userAddress: normalizedUser })
-      .first();
-
-    if (!funding) {
-      funding = await db.orm.public.UserFunding.create({
-        userAddress: normalizedUser,
-        fundedBalanceWei: "0",
-        spentBalanceWei: "0",
-        updatedAt: new Date(),
-      });
-    }
-
-    // Find or create the Invoice record
     let invoice = await db.orm.public.Invoice
       .where({ invoiceId: rawInv.invoiceId })
       .first();
@@ -147,7 +154,8 @@ async function processInvoices() {
     if (!invoice) {
       invoice = await db.orm.public.Invoice.create({
         invoiceId: rawInv.invoiceId,
-        userAddress: normalizedUser,
+        vaultAddress: normVault,
+        userAddress: normUser,
         payee: rawInv.payee,
         amountWei: amountWei.toString(),
         status: InvoiceStatus.PENDING,
@@ -163,84 +171,105 @@ async function processInvoices() {
       continue;
     }
 
-    if (!isAddress(invoice.payee)) {
-      await db.orm.public.Invoice
-        .where({ id: invoice.id })
-        .update({
-          status: InvoiceStatus.FAILED,
-          errorReason: `Invalid payee address: ${invoice.payee}`,
-          updatedAt: new Date(),
-        });
+    if (!isAddress(normVault) || !isAddress(invoice.payee)) {
+      await db.orm.public.Invoice.where({ id: invoice.id }).update({
+        status: InvoiceStatus.FAILED,
+        errorReason: `Invalid vault or payee address: vault=${normVault}, payee=${invoice.payee}`,
+        updatedAt: new Date(),
+      });
       continue;
     }
 
-    // Re-read latest per-user balance before spending
-    const latestFunding = await db.orm.public.UserFunding
-      .where({ userAddress: normalizedUser })
+    const mnemonic = await getMnemonicForVault(normVault);
+    if (!mnemonic) {
+      await db.orm.public.Invoice.where({ id: invoice.id }).update({
+        status: InvoiceStatus.FAILED,
+        errorReason: `No bot mnemonic stored in DB for vault ${normVault}`,
+        updatedAt: new Date(),
+      });
+      continue;
+    }
+
+    let signerEntry = signerCache.get(normVault);
+    if (!signerEntry) {
+      const derivedEvm = await deriveEvmAccount(mnemonic);
+      const privateKeyHex = toHex(derivedEvm.privateKey) as Hex;
+      const agentAccount = evmAccountFromPrivateKey(privateKeyHex);
+      const walletClient = evmClient.getWalletClient(agentAccount);
+      signerEntry = { agentAccount, walletClient };
+      signerCache.set(normVault, signerEntry);
+    }
+
+    if (
+      rawInv.botAddress &&
+      signerEntry.agentAccount.address.toLowerCase() !==
+        rawInv.botAddress.toLowerCase()
+    ) {
+      await db.orm.public.Invoice.where({ id: invoice.id }).update({
+        status: InvoiceStatus.FAILED,
+        errorReason: `Configured signer ${signerEntry.agentAccount.address} does not match vault bot ${rawInv.botAddress}`,
+        updatedAt: new Date(),
+      });
+      continue;
+    }
+
+    const funding = await db.orm.public.UserFunding
+      .where({ vaultAddress: normVault, userAddress: normUser })
       .first();
 
-    const funded = BigInt(latestFunding?.fundedBalanceWei ?? "0");
-    const spent = BigInt(latestFunding?.spentBalanceWei ?? "0");
+    const funded = BigInt(funding?.fundedBalanceWei ?? "0");
+    const spent = BigInt(funding?.spentBalanceWei ?? "0");
     const available = funded - spent;
 
     if (available < amountWei) {
-      await db.orm.public.Invoice
-        .where({ id: invoice.id })
-        .update({
-          status: InvoiceStatus.INSUFFICIENT_FUNDS,
-          errorReason: `Insufficient user balance: available=${available.toString()} wei, required=${amountWei.toString()} wei`,
-          updatedAt: new Date(),
-        });
+      await db.orm.public.Invoice.where({ id: invoice.id }).update({
+        status: InvoiceStatus.INSUFFICIENT_FUNDS,
+        errorReason: `Insufficient user balance: available=${available.toString()} wei, required=${amountWei.toString()} wei`,
+        updatedAt: new Date(),
+      });
       console.warn(
-        `Skipping invoice ${invoice.invoiceId} for ${normalizedUser}: insufficient funded balance.`,
+        `Skipping invoice ${invoice.invoiceId} on vault ${normVault} for ${normUser}: insufficient funded balance.`,
       );
       continue;
     }
 
     try {
-      // 1. Simulate payBill on-chain
       const { request } = await evmClient.publicClient.simulateContract({
-        address: vaultAddress,
+        address: normVault,
         abi: vaultAbi,
         functionName: "payBill",
         args: [invoice.payee as `0x${string}`, amountWei, invoice.invoiceId],
-        account: agentAccount,
+        account: signerEntry.agentAccount,
       });
 
-      // 2. Broadcast and wait for receipt
-      const txHash = await walletClient.writeContract(request);
+      const txHash = await signerEntry.walletClient.writeContract(request);
       await evmClient.publicClient.waitForTransactionReceipt({ hash: txHash });
 
-      // 3. Update user's spent balance and mark invoice PAID
       await db.orm.public.UserFunding
-        .where({ userAddress: normalizedUser })
+        .where({ vaultAddress: normVault, userAddress: normUser })
         .update({
           spentBalanceWei: (spent + amountWei).toString(),
           updatedAt: new Date(),
         });
 
-      await db.orm.public.Invoice
-        .where({ id: invoice.id })
-        .update({
-          status: InvoiceStatus.PAID,
-          txHash,
-          errorReason: null,
-          paidAt: new Date(),
-          updatedAt: new Date(),
-        });
+      await db.orm.public.Invoice.where({ id: invoice.id }).update({
+        status: InvoiceStatus.PAID,
+        txHash,
+        errorReason: null,
+        paidAt: new Date(),
+        updatedAt: new Date(),
+      });
 
       console.log(
-        `Paid invoice ${invoice.invoiceId} for ${normalizedUser} -> ${invoice.payee}, tx: ${txHash}`,
+        `Paid invoice ${invoice.invoiceId} on vault ${normVault} (${normUser} -> ${invoice.payee}), tx: ${txHash}`,
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await db.orm.public.Invoice
-        .where({ id: invoice.id })
-        .update({
-          status: InvoiceStatus.FAILED,
-          errorReason: message.slice(0, 500),
-          updatedAt: new Date(),
-        });
+      await db.orm.public.Invoice.where({ id: invoice.id }).update({
+        status: InvoiceStatus.FAILED,
+        errorReason: message.slice(0, 500),
+        updatedAt: new Date(),
+      });
       console.error(`Failed invoice ${invoice.invoiceId}:`, message);
     }
   }

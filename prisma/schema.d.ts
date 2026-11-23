@@ -23,9 +23,9 @@ import type {
 } from '@prisma/orm-postgres/contract/types';
 
 export type StorageHash =
-  StorageHashBase<'fa2fe8a7ed1a76fb37b750b407aed2d823f5c147eae2be6db7d786f9918a1bbf'>;
+  StorageHashBase<'5413419c4c2bdd51bac2f02a2f1f3b0fa529c70964b220708d450f1d4acfb966'>;
 export type ExecutionHash =
-  ExecutionHashBase<'c1cad9b30741d64f87a73380796b06767e4d44c53b37d0cb0be71e3e23fed061'>;
+  ExecutionHashBase<'c42b4294b2fc825e2f6dabb9a2c79742f745fa33d1a84b122346343912896dd2'>;
 export type ProfileHash =
   ProfileHashBase<'3916f444a8a17ad749191acf9e08dad97d1a327b88c2f1d45d12f240296aa8b2'>;
 
@@ -329,14 +329,29 @@ export type StorageColumnInputTypes = ColumnTypesFromStorage<
 >;
 
 export namespace Models {
+  export type public_AgentBot = {
+    botAddress: FieldOutputTypes['public']['AgentBot']['botAddress'];
+    createdAt: FieldOutputTypes['public']['AgentBot']['createdAt'];
+    encryptedMnemonic: FieldOutputTypes['public']['AgentBot']['encryptedMnemonic'];
+    id: FieldOutputTypes['public']['AgentBot']['id'];
+    ownerAddress: FieldOutputTypes['public']['AgentBot']['ownerAddress'];
+    updatedAt: FieldOutputTypes['public']['AgentBot']['updatedAt'];
+    vaultAddress: FieldOutputTypes['public']['AgentBot']['vaultAddress'];
+    deposits: public_FundingDeposit[];
+    fundings: public_UserFunding[];
+    invoices: public_Invoice[];
+    readonly [RelationKeys]?: 'deposits' | 'fundings' | 'invoices';
+  };
   export type public_FundingDeposit = {
     amountWei: FieldOutputTypes['public']['FundingDeposit']['amountWei'];
     createdAt: FieldOutputTypes['public']['FundingDeposit']['createdAt'];
     id: FieldOutputTypes['public']['FundingDeposit']['id'];
     txHash: FieldOutputTypes['public']['FundingDeposit']['txHash'];
     userAddress: FieldOutputTypes['public']['FundingDeposit']['userAddress'];
+    vaultAddress: FieldOutputTypes['public']['FundingDeposit']['vaultAddress'];
     user: public_UserFunding;
-    readonly [RelationKeys]?: 'user';
+    vault: public_AgentBot;
+    readonly [RelationKeys]?: 'user' | 'vault';
   };
   export type public_Invoice = {
     amountWei: FieldOutputTypes['public']['Invoice']['amountWei'];
@@ -350,8 +365,10 @@ export namespace Models {
     txHash: FieldOutputTypes['public']['Invoice']['txHash'];
     updatedAt: FieldOutputTypes['public']['Invoice']['updatedAt'];
     userAddress: FieldOutputTypes['public']['Invoice']['userAddress'];
+    vaultAddress: FieldOutputTypes['public']['Invoice']['vaultAddress'];
     user: public_UserFunding;
-    readonly [RelationKeys]?: 'user';
+    vault: public_AgentBot;
+    readonly [RelationKeys]?: 'user' | 'vault';
   };
   export type public_UserFunding = {
     fundedBalanceWei: FieldOutputTypes['public']['UserFunding']['fundedBalanceWei'];
@@ -359,14 +376,17 @@ export namespace Models {
     spentBalanceWei: FieldOutputTypes['public']['UserFunding']['spentBalanceWei'];
     updatedAt: FieldOutputTypes['public']['UserFunding']['updatedAt'];
     userAddress: FieldOutputTypes['public']['UserFunding']['userAddress'];
+    vaultAddress: FieldOutputTypes['public']['UserFunding']['vaultAddress'];
     deposits: public_FundingDeposit[];
     invoices: public_Invoice[];
-    readonly [RelationKeys]?: 'deposits' | 'invoices';
+    vault: public_AgentBot;
+    readonly [RelationKeys]?: 'deposits' | 'invoices' | 'vault';
   };
 }
 
 export declare const models: {
   public: {
+    AgentBot: Models.public_AgentBot;
     FundingDeposit: Models.public_FundingDeposit;
     Invoice: Models.public_Invoice;
     UserFunding: Models.public_UserFunding;
@@ -391,6 +411,59 @@ type ContractBase = Omit<
         readonly kind: 'postgres-schema';
         readonly entries: {
           readonly table: {
+            readonly AgentBot: {
+              columns: {
+                readonly botAddress: {
+                  readonly dataType: 'pg/text';
+                  readonly codecId: 'pg/text@1';
+                  readonly nullable: false;
+                  readonly many: false;
+                };
+                readonly createdAt: {
+                  readonly dataType: 'pg/timestamptz';
+                  readonly codecId: 'pg/timestamptz-date@1';
+                  readonly nullable: false;
+                  readonly default: { readonly kind: 'function'; readonly expression: 'now()' };
+                  readonly typeParams: { readonly precision: 3 };
+                  readonly many: false;
+                };
+                readonly encryptedMnemonic: {
+                  readonly dataType: 'pg/text';
+                  readonly codecId: 'pg/text@1';
+                  readonly nullable: true;
+                  readonly many: false;
+                };
+                readonly id: {
+                  readonly dataType: 'pg/text';
+                  readonly codecId: 'pg/text@1';
+                  readonly nullable: false;
+                  readonly many: false;
+                };
+                readonly ownerAddress: {
+                  readonly dataType: 'pg/text';
+                  readonly codecId: 'pg/text@1';
+                  readonly nullable: false;
+                  readonly many: false;
+                };
+                readonly updatedAt: {
+                  readonly dataType: 'pg/timestamptz';
+                  readonly codecId: 'pg/timestamptz-date@1';
+                  readonly nullable: false;
+                  readonly typeParams: { readonly precision: 3 };
+                  readonly many: false;
+                };
+                readonly vaultAddress: {
+                  readonly dataType: 'pg/text';
+                  readonly codecId: 'pg/text@1';
+                  readonly nullable: false;
+                  readonly many: false;
+                };
+              };
+              primaryKey: { readonly columns: readonly ['id'] };
+              uniques: readonly [{ readonly columns: readonly ['vaultAddress'] }];
+              indexes: readonly [];
+              foreignKeys: readonly [];
+            };
             readonly FundingDeposit: {
               columns: {
                 readonly amountWei: {
@@ -425,14 +498,26 @@ type ContractBase = Omit<
                   readonly nullable: false;
                   readonly many: false;
                 };
+                readonly vaultAddress: {
+                  readonly dataType: 'pg/text';
+                  readonly codecId: 'pg/text@1';
+                  readonly nullable: false;
+                  readonly many: false;
+                };
               };
               primaryKey: { readonly columns: readonly ['id'] };
               uniques: readonly [{ readonly columns: readonly ['txHash'] }];
               indexes: readonly [
                 {
-                  readonly name: 'FundingDeposit_userAddress_idx_3f459b97';
-                  readonly prefix: 'FundingDeposit_userAddress_idx';
-                  readonly columns: readonly ['userAddress'];
+                  readonly name: 'FundingDeposit_vaultAddress_idx_b9f4ac4d';
+                  readonly prefix: 'FundingDeposit_vaultAddress_idx';
+                  readonly columns: readonly ['vaultAddress'];
+                  readonly unique: false;
+                },
+                {
+                  readonly name: 'FundingDeposit_vaultAddress_userAddress_idx_4973e54f';
+                  readonly prefix: 'FundingDeposit_vaultAddress_userAddress_idx';
+                  readonly columns: readonly ['vaultAddress', 'userAddress'];
                   readonly unique: false;
                 },
               ];
@@ -441,12 +526,24 @@ type ContractBase = Omit<
                   readonly source: {
                     readonly namespaceId: 'public' & NamespaceId;
                     readonly tableName: 'FundingDeposit';
-                    readonly columns: readonly ['userAddress'];
+                    readonly columns: readonly ['vaultAddress'];
+                  };
+                  readonly target: {
+                    readonly namespaceId: 'public' & NamespaceId;
+                    readonly tableName: 'AgentBot';
+                    readonly columns: readonly ['vaultAddress'];
+                  };
+                },
+                {
+                  readonly source: {
+                    readonly namespaceId: 'public' & NamespaceId;
+                    readonly tableName: 'FundingDeposit';
+                    readonly columns: readonly ['vaultAddress', 'userAddress'];
                   };
                   readonly target: {
                     readonly namespaceId: 'public' & NamespaceId;
                     readonly tableName: 'UserFunding';
-                    readonly columns: readonly ['userAddress'];
+                    readonly columns: readonly ['vaultAddress', 'userAddress'];
                   };
                 },
               ];
@@ -527,14 +624,26 @@ type ContractBase = Omit<
                   readonly nullable: false;
                   readonly many: false;
                 };
+                readonly vaultAddress: {
+                  readonly dataType: 'pg/text';
+                  readonly codecId: 'pg/text@1';
+                  readonly nullable: false;
+                  readonly many: false;
+                };
               };
               primaryKey: { readonly columns: readonly ['id'] };
               uniques: readonly [{ readonly columns: readonly ['invoiceId'] }];
               indexes: readonly [
                 {
-                  readonly name: 'Invoice_userAddress_idx_3f459b97';
-                  readonly prefix: 'Invoice_userAddress_idx';
-                  readonly columns: readonly ['userAddress'];
+                  readonly name: 'Invoice_vaultAddress_idx_b9f4ac4d';
+                  readonly prefix: 'Invoice_vaultAddress_idx';
+                  readonly columns: readonly ['vaultAddress'];
+                  readonly unique: false;
+                },
+                {
+                  readonly name: 'Invoice_vaultAddress_userAddress_idx_4973e54f';
+                  readonly prefix: 'Invoice_vaultAddress_userAddress_idx';
+                  readonly columns: readonly ['vaultAddress', 'userAddress'];
                   readonly unique: false;
                 },
               ];
@@ -543,12 +652,24 @@ type ContractBase = Omit<
                   readonly source: {
                     readonly namespaceId: 'public' & NamespaceId;
                     readonly tableName: 'Invoice';
-                    readonly columns: readonly ['userAddress'];
+                    readonly columns: readonly ['vaultAddress'];
+                  };
+                  readonly target: {
+                    readonly namespaceId: 'public' & NamespaceId;
+                    readonly tableName: 'AgentBot';
+                    readonly columns: readonly ['vaultAddress'];
+                  };
+                },
+                {
+                  readonly source: {
+                    readonly namespaceId: 'public' & NamespaceId;
+                    readonly tableName: 'Invoice';
+                    readonly columns: readonly ['vaultAddress', 'userAddress'];
                   };
                   readonly target: {
                     readonly namespaceId: 'public' & NamespaceId;
                     readonly tableName: 'UserFunding';
-                    readonly columns: readonly ['userAddress'];
+                    readonly columns: readonly ['vaultAddress', 'userAddress'];
                   };
                 },
               ];
@@ -594,11 +715,37 @@ type ContractBase = Omit<
                   readonly nullable: false;
                   readonly many: false;
                 };
+                readonly vaultAddress: {
+                  readonly dataType: 'pg/text';
+                  readonly codecId: 'pg/text@1';
+                  readonly nullable: false;
+                  readonly many: false;
+                };
               };
               primaryKey: { readonly columns: readonly ['id'] };
-              uniques: readonly [{ readonly columns: readonly ['userAddress'] }];
-              indexes: readonly [];
-              foreignKeys: readonly [];
+              uniques: readonly [{ readonly columns: readonly ['vaultAddress', 'userAddress'] }];
+              indexes: readonly [
+                {
+                  readonly name: 'UserFunding_vaultAddress_idx_b9f4ac4d';
+                  readonly prefix: 'UserFunding_vaultAddress_idx';
+                  readonly columns: readonly ['vaultAddress'];
+                  readonly unique: false;
+                },
+              ];
+              foreignKeys: readonly [
+                {
+                  readonly source: {
+                    readonly namespaceId: 'public' & NamespaceId;
+                    readonly tableName: 'UserFunding';
+                    readonly columns: readonly ['vaultAddress'];
+                  };
+                  readonly target: {
+                    readonly namespaceId: 'public' & NamespaceId;
+                    readonly tableName: 'AgentBot';
+                    readonly columns: readonly ['vaultAddress'];
+                  };
+                },
+              ];
             };
           };
           readonly valueSet: {
@@ -617,6 +764,7 @@ type ContractBase = Omit<
   readonly target: 'postgres';
   readonly targetFamily: 'sql';
   readonly roots: {
+    readonly AgentBot: { readonly namespace: 'public' & NamespaceId; readonly model: 'AgentBot' };
     readonly FundingDeposit: {
       readonly namespace: 'public' & NamespaceId;
       readonly model: 'FundingDeposit';
@@ -631,6 +779,94 @@ type ContractBase = Omit<
     readonly namespaces: {
       readonly public: {
         readonly models: {
+          readonly AgentBot: {
+            readonly fields: {
+              readonly botAddress: {
+                readonly nullable: false;
+                readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
+              };
+              readonly createdAt: {
+                readonly nullable: false;
+                readonly type: {
+                  readonly kind: 'scalar';
+                  readonly codecId: 'pg/timestamptz-date@1';
+                  readonly typeParams: { readonly precision: 3 };
+                };
+              };
+              readonly encryptedMnemonic: {
+                readonly nullable: true;
+                readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
+              };
+              readonly id: {
+                readonly nullable: false;
+                readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
+              };
+              readonly ownerAddress: {
+                readonly nullable: false;
+                readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
+              };
+              readonly updatedAt: {
+                readonly nullable: false;
+                readonly type: {
+                  readonly kind: 'scalar';
+                  readonly codecId: 'pg/timestamptz-date@1';
+                  readonly typeParams: { readonly precision: 3 };
+                };
+              };
+              readonly vaultAddress: {
+                readonly nullable: false;
+                readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
+              };
+            };
+            readonly relations: {
+              readonly deposits: {
+                readonly to: {
+                  readonly namespace: 'public' & NamespaceId;
+                  readonly model: 'FundingDeposit';
+                };
+                readonly cardinality: '1:N';
+                readonly on: {
+                  readonly localFields: readonly ['vaultAddress'];
+                  readonly targetFields: readonly ['vaultAddress'];
+                };
+              };
+              readonly fundings: {
+                readonly to: {
+                  readonly namespace: 'public' & NamespaceId;
+                  readonly model: 'UserFunding';
+                };
+                readonly cardinality: '1:N';
+                readonly on: {
+                  readonly localFields: readonly ['vaultAddress'];
+                  readonly targetFields: readonly ['vaultAddress'];
+                };
+              };
+              readonly invoices: {
+                readonly to: {
+                  readonly namespace: 'public' & NamespaceId;
+                  readonly model: 'Invoice';
+                };
+                readonly cardinality: '1:N';
+                readonly on: {
+                  readonly localFields: readonly ['vaultAddress'];
+                  readonly targetFields: readonly ['vaultAddress'];
+                };
+              };
+            };
+            readonly storage: {
+              readonly table: 'AgentBot';
+              readonly namespaceId: 'public';
+              readonly fields: {
+                readonly botAddress: { readonly column: 'botAddress' };
+                readonly createdAt: { readonly column: 'createdAt' };
+                readonly encryptedMnemonic: { readonly column: 'encryptedMnemonic' };
+                readonly id: { readonly column: 'id' };
+                readonly ownerAddress: { readonly column: 'ownerAddress' };
+                readonly updatedAt: { readonly column: 'updatedAt' };
+                readonly vaultAddress: { readonly column: 'vaultAddress' };
+              };
+            };
+          };
           readonly FundingDeposit: {
             readonly fields: {
               readonly amountWei: {
@@ -657,6 +893,10 @@ type ContractBase = Omit<
                 readonly nullable: false;
                 readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
               };
+              readonly vaultAddress: {
+                readonly nullable: false;
+                readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
+              };
             };
             readonly relations: {
               readonly user: {
@@ -667,8 +907,20 @@ type ContractBase = Omit<
                 readonly cardinality: 'N:1';
                 readonly nullable: false;
                 readonly on: {
-                  readonly localFields: readonly ['userAddress'];
-                  readonly targetFields: readonly ['userAddress'];
+                  readonly localFields: readonly ['vaultAddress', 'userAddress'];
+                  readonly targetFields: readonly ['vaultAddress', 'userAddress'];
+                };
+              };
+              readonly vault: {
+                readonly to: {
+                  readonly namespace: 'public' & NamespaceId;
+                  readonly model: 'AgentBot';
+                };
+                readonly cardinality: 'N:1';
+                readonly nullable: false;
+                readonly on: {
+                  readonly localFields: readonly ['vaultAddress'];
+                  readonly targetFields: readonly ['vaultAddress'];
                 };
               };
             };
@@ -681,6 +933,7 @@ type ContractBase = Omit<
                 readonly id: { readonly column: 'id' };
                 readonly txHash: { readonly column: 'txHash' };
                 readonly userAddress: { readonly column: 'userAddress' };
+                readonly vaultAddress: { readonly column: 'vaultAddress' };
               };
             };
           };
@@ -742,6 +995,10 @@ type ContractBase = Omit<
                 readonly nullable: false;
                 readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
               };
+              readonly vaultAddress: {
+                readonly nullable: false;
+                readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
+              };
             };
             readonly relations: {
               readonly user: {
@@ -752,8 +1009,20 @@ type ContractBase = Omit<
                 readonly cardinality: 'N:1';
                 readonly nullable: false;
                 readonly on: {
-                  readonly localFields: readonly ['userAddress'];
-                  readonly targetFields: readonly ['userAddress'];
+                  readonly localFields: readonly ['vaultAddress', 'userAddress'];
+                  readonly targetFields: readonly ['vaultAddress', 'userAddress'];
+                };
+              };
+              readonly vault: {
+                readonly to: {
+                  readonly namespace: 'public' & NamespaceId;
+                  readonly model: 'AgentBot';
+                };
+                readonly cardinality: 'N:1';
+                readonly nullable: false;
+                readonly on: {
+                  readonly localFields: readonly ['vaultAddress'];
+                  readonly targetFields: readonly ['vaultAddress'];
                 };
               };
             };
@@ -772,6 +1041,7 @@ type ContractBase = Omit<
                 readonly txHash: { readonly column: 'txHash' };
                 readonly updatedAt: { readonly column: 'updatedAt' };
                 readonly userAddress: { readonly column: 'userAddress' };
+                readonly vaultAddress: { readonly column: 'vaultAddress' };
               };
             };
           };
@@ -801,6 +1071,10 @@ type ContractBase = Omit<
                 readonly nullable: false;
                 readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
               };
+              readonly vaultAddress: {
+                readonly nullable: false;
+                readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
+              };
             };
             readonly relations: {
               readonly deposits: {
@@ -810,8 +1084,8 @@ type ContractBase = Omit<
                 };
                 readonly cardinality: '1:N';
                 readonly on: {
-                  readonly localFields: readonly ['userAddress'];
-                  readonly targetFields: readonly ['userAddress'];
+                  readonly localFields: readonly ['vaultAddress', 'userAddress'];
+                  readonly targetFields: readonly ['vaultAddress', 'userAddress'];
                 };
               };
               readonly invoices: {
@@ -821,8 +1095,20 @@ type ContractBase = Omit<
                 };
                 readonly cardinality: '1:N';
                 readonly on: {
-                  readonly localFields: readonly ['userAddress'];
-                  readonly targetFields: readonly ['userAddress'];
+                  readonly localFields: readonly ['vaultAddress', 'userAddress'];
+                  readonly targetFields: readonly ['vaultAddress', 'userAddress'];
+                };
+              };
+              readonly vault: {
+                readonly to: {
+                  readonly namespace: 'public' & NamespaceId;
+                  readonly model: 'AgentBot';
+                };
+                readonly cardinality: 'N:1';
+                readonly nullable: false;
+                readonly on: {
+                  readonly localFields: readonly ['vaultAddress'];
+                  readonly targetFields: readonly ['vaultAddress'];
                 };
               };
             };
@@ -835,6 +1121,7 @@ type ContractBase = Omit<
                 readonly spentBalanceWei: { readonly column: 'spentBalanceWei' };
                 readonly updatedAt: { readonly column: 'updatedAt' };
                 readonly userAddress: { readonly column: 'userAddress' };
+                readonly vaultAddress: { readonly column: 'vaultAddress' };
               };
             };
           };
@@ -894,6 +1181,26 @@ type ContractBase = Omit<
     readonly executionHash: ExecutionHash;
     readonly mutations: {
       readonly defaults: readonly [
+        {
+          readonly onCreate: { readonly id: 'cuid2'; readonly kind: 'generator' };
+          readonly ref: {
+            readonly entry: 'AgentBot';
+            readonly field: 'id';
+            readonly namespace: 'public';
+          };
+        },
+        {
+          readonly onUpdate: {
+            readonly id: 'timestampNow';
+            readonly kind: 'generator';
+            readonly params: { readonly precision: 3 };
+          };
+          readonly ref: {
+            readonly entry: 'AgentBot';
+            readonly field: 'updatedAt';
+            readonly namespace: 'public';
+          };
+        },
         {
           readonly onCreate: { readonly id: 'cuid2'; readonly kind: 'generator' };
           readonly ref: {
