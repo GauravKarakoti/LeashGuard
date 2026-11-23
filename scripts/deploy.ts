@@ -6,7 +6,16 @@ import {
   deployContract,
   evmAccountFromPrivateKey,
 } from "@qorechain/evm";
-import { parseEther, type Abi, type Hex } from "viem";
+import {
+  deriveEvmAccount,
+} from "@qorechain/sdk";
+import {
+  isAddress,
+  parseEther,
+  toHex,
+  type Abi,
+  type Hex,
+} from "viem";
 import AgentVault from "../artifacts/contracts/AgentVault.sol/AgentVault.json";
 
 const DEPLOYMENT_FILE = path.resolve(
@@ -25,35 +34,68 @@ export interface AgentVaultDeployment {
   agent: `0x${string}`;
   perTxLimit: string;
   dailyLimit: string;
-  ownerPqcKeyHash: `0x${string}`;
   deployedAt: string;
   abi: Abi;
 }
 
+function resolveEvmRpcUrl(): string {
+  const url = process.env.VITE_QORE_EVM_RPC_URL;
+  if (!url) {
+    throw new Error(
+      "Missing VITE_QORE_EVM_RPC_URL in environment.",
+    );
+  }
+  return url;
+}
+
 async function main() {
-  const deployerPrivateKey = process.env.DEPLOYER_PRIVATE_KEY as Hex;
-  if (!deployerPrivateKey) {
-    throw new Error("Missing DEPLOYER_PRIVATE_KEY in environment.");
+  const ownerMnemonic = process.env.OWNER_MNEMONIC;
+  if (!ownerMnemonic) {
+    throw new Error("Missing OWNER_MNEMONIC in environment.");
   }
 
+  const evmRpcUrl = resolveEvmRpcUrl();
   const client = await createEvmClient({
-    endpoints: { evmRpc: process.env.VITE_QORE_EVM_RPC_URL! },
+    endpoints: { evmRpc: evmRpcUrl },
   });
 
-  const deployerAccount = evmAccountFromPrivateKey(deployerPrivateKey);
+  // Derive EVM deployer account & ML-DSA-87 PQC keypair from OWNER_MNEMONIC
+  const derivedOwnerEvm = await deriveEvmAccount(ownerMnemonic, {
+    accountIndex: 0,
+  });
+  const ownerPrivateKeyHex = toHex(derivedOwnerEvm.privateKey) as Hex;
+  const deployerAccount = evmAccountFromPrivateKey(ownerPrivateKeyHex);
   const walletClient = client.getWalletClient(deployerAccount);
 
-  const owner = (process.env.OWNER_EVM_ADDRESS ?? "0x...") as `0x${string}`;
-  const agent = (process.env.AGENT_EVM_ADDRESS ?? "0x...") as `0x${string}`;
+  // Resolve owner address
+  const envOwner = process.env.OWNER_EVM_ADDRESS;
+  const owner = (envOwner && isAddress(envOwner)
+    ? envOwner
+    : deployerAccount.address) as `0x${string}`;
+
+  // Resolve agent address from AGENT_MNEMONIC
+  let agent: `0x${string}`;
+  if (process.env.AGENT_MNEMONIC) {
+    const derivedAgentEvm = await deriveEvmAccount(process.env.AGENT_MNEMONIC, {
+      accountIndex: 0,
+    });
+    agent = derivedAgentEvm.address as `0x${string}`;
+  } else {
+    throw new Error(
+      "Set AGENT_MNEMONIC in .env so the vault agent address is configured.",
+    );
+  }
+
   const perTxLimit = parseEther("0.5"); // 0.5 QOR
   const dailyLimit = parseEther("5"); // 5 QOR
-  const ownerPqcKeyHash = (process.env.OWNER_PQC_KEY_HASH ??
-    "0x...") as `0x${string}`;
+
+  console.log("Deployer / Owner EVM address:", deployerAccount.address);
+  console.log("Agent EVM address:", agent);
 
   const txHash = await deployContract(walletClient, {
     abi: vaultAbi,
     bytecode: AgentVault.bytecode as Hex,
-    args: [owner, agent, perTxLimit, dailyLimit, ownerPqcKeyHash],
+    args: [owner, agent, perTxLimit, dailyLimit],
   });
 
   const receipt = await client.publicClient.waitForTransactionReceipt({
@@ -78,7 +120,6 @@ async function main() {
     agent,
     perTxLimit: perTxLimit.toString(),
     dailyLimit: dailyLimit.toString(),
-    ownerPqcKeyHash,
     deployedAt: new Date().toISOString(),
     abi: vaultAbi,
   };

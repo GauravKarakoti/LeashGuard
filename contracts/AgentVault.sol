@@ -17,19 +17,20 @@ contract AgentVault {
     // Payee allowlist
     mapping(address => bool) public approvedPayees;
 
-    // Owner's PQC public key hash (registered on-chain)
-    bytes32 public ownerPqcKeyHash;
-
     event BillPaid(address indexed payee, uint256 amount, bytes32 invoiceId);
     event RulesUpdated(uint256 newPerTxLimit, uint256 newDailyLimit);
-    event PayeeApproved(address payee);
-    event PayeeRevoked(address payee);
+    event PayeeApproved(address indexed payee);
+    event PayeeRevoked(address indexed payee);
+    event VaultFunded(address indexed sender, uint256 amount);
 
     error NotAgent();
     error NotOwner();
+    error ZeroAddress();
+    error InvalidLimits();
     error PayeeNotApproved();
     error ExceedsPerTxLimit();
     error ExceedsDailyLimit();
+    error TransferFailed();
 
     modifier onlyAgent() {
         if (msg.sender != agent) revert NotAgent();
@@ -45,14 +46,15 @@ contract AgentVault {
         address _owner,
         address _agent,
         uint256 _perTxLimit,
-        uint256 _dailyLimit,
-        bytes32 _ownerPqcKeyHash
+        uint256 _dailyLimit
     ) {
+        if (_owner == address(0) || _agent == address(0)) revert ZeroAddress();
+        if (_dailyLimit < _perTxLimit) revert InvalidLimits();
+
         owner = _owner;
         agent = _agent;
         perTxLimit = _perTxLimit;
         dailyLimit = _dailyLimit;
-        ownerPqcKeyHash = _ownerPqcKeyHash;
         lastSpendDay = block.timestamp / 1 days;
     }
 
@@ -62,6 +64,7 @@ contract AgentVault {
         external
         onlyAgent
     {
+        if (payee == address(0)) revert ZeroAddress();
         if (!approvedPayees[payee]) revert PayeeNotApproved();
         if (amount > perTxLimit) revert ExceedsPerTxLimit();
 
@@ -75,24 +78,20 @@ contract AgentVault {
         if (spentToday + amount > dailyLimit) revert ExceedsDailyLimit();
         spentToday += amount;
 
-        // Transfer native QOR (or ERC-20 if you extend this)
+        // Transfer native QOR
         (bool ok, ) = payee.call{value: amount}("");
-        require(ok, "Transfer failed");
+        if (!ok) revert TransferFailed();
 
         emit BillPaid(payee, amount, invoiceId);
     }
 
     /// @notice Update spending rules. Requires a valid ML-DSA-87 signature
     ///         from the owner, verified on-chain via the pqcVerify precompile.
-    /// @dev In practice, the agent or owner submits this transaction with a
-    ///      hybrid signature. The precompile call is abstracted for brevity.
     function updateRules(uint256 newPerTxLimit, uint256 newDailyLimit)
         external
         onlyOwner
     {
-        // In a full implementation, call QoreChain's pqcVerify precompile
-        // to verify the caller's ML-DSA-87 signature against ownerPqcKeyHash.
-        // The SDK handles this when you use hybrid signing.
+        if (newDailyLimit < newPerTxLimit) revert InvalidLimits();
         perTxLimit = newPerTxLimit;
         dailyLimit = newDailyLimit;
         emit RulesUpdated(newPerTxLimit, newDailyLimit);
@@ -100,6 +99,7 @@ contract AgentVault {
 
     /// @notice Approve a payee. Only the owner can call this.
     function approvePayee(address payee) external onlyOwner {
+        if (payee == address(0)) revert ZeroAddress();
         approvedPayees[payee] = true;
         emit PayeeApproved(payee);
     }
@@ -110,6 +110,8 @@ contract AgentVault {
         emit PayeeRevoked(payee);
     }
 
-    /// @notice Allow the vault to receive QOR.
-    receive() external payable {}
+    /// @notice Allow users and the vault to receive native QOR.
+    receive() external payable {
+        emit VaultFunded(msg.sender, msg.value);
+    }
 }

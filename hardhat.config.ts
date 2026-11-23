@@ -3,7 +3,7 @@ import { defineConfig } from "hardhat/config";
 
 const QORE_EVM_RPC_URL =
   process.env.VITE_QORE_EVM_RPC_URL ?? "https://evm-testnet.qore.host";
-const DEPLOYER_PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY ?? "";
+const MNEMONIC = process.env.OWNER_MNEMONIC ?? "";
 
 export default defineConfig({
   plugins: [hardhatToolboxMochaEthersPlugin],
@@ -28,7 +28,7 @@ export default defineConfig({
       type: "http",
       url: QORE_EVM_RPC_URL,
       chainId: 9800,
-      accounts: DEPLOYER_PRIVATE_KEY ? [DEPLOYER_PRIVATE_KEY] : [],
+      accounts: { mnemonic: MNEMONIC, path: "m/44'/60'/0'/0", initialIndex: 0 }
     },
   },
 });

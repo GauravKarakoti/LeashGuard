@@ -110,7 +110,7 @@ export function RulesEditor({
 
         <button
           type="submit"
-          disabled={!canEdit || isPending || isMining}
+          disabled={!canEdit || isPending || isMining || !dailyInput || !perTxInput}
           className="w-full rounded-md bg-emerald-500 px-3 py-2 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-40"
         >
           {isPending || isMining ? "Signing…" : "Update rules"}

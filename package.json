@@ -12,7 +12,8 @@
     "postinstall": "prisma skills sync || exit 0",
     "db:update": "prisma db update",
     "db:emit": "prisma contract emit",
-    "server": "tsx src/server/index.ts"
+    "server": "tsx src/server/index.ts",
+    "deploy": "hardhat run scripts/deploy.ts --network qorechainTestnet"
   },
   "dependencies": {
     "@prisma/orm-postgres": "^8.0.0-rc.24",
