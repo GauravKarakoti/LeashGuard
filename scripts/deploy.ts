@@ -6,16 +6,8 @@ import {
   deployContract,
   evmAccountFromPrivateKey,
 } from "@qorechain/evm";
-import {
-  deriveEvmAccount,
-} from "@qorechain/sdk";
-import {
-  isAddress,
-  parseEther,
-  toHex,
-  type Abi,
-  type Hex,
-} from "viem";
+import { deriveEvmAccount } from "@qorechain/sdk";
+import { isAddress, parseEther, toHex, type Abi, type Hex } from "viem";
 import AgentVault from "../artifacts/contracts/AgentVault.sol/AgentVault.json";
 
 const DEPLOYMENT_FILE = path.resolve(
@@ -41,9 +33,7 @@ export interface AgentVaultDeployment {
 function resolveEvmRpcUrl(): string {
   const url = process.env.VITE_QORE_EVM_RPC_URL;
   if (!url) {
-    throw new Error(
-      "Missing VITE_QORE_EVM_RPC_URL in environment.",
-    );
+    throw new Error("Missing VITE_QORE_EVM_RPC_URL in environment.");
   }
   return url;
 }
@@ -59,7 +49,6 @@ async function main() {
     endpoints: { evmRpc: evmRpcUrl },
   });
 
-  // Derive EVM deployer account & ML-DSA-87 PQC keypair from OWNER_MNEMONIC
   const derivedOwnerEvm = await deriveEvmAccount(ownerMnemonic, {
     accountIndex: 0,
   });
@@ -67,13 +56,11 @@ async function main() {
   const deployerAccount = evmAccountFromPrivateKey(ownerPrivateKeyHex);
   const walletClient = client.getWalletClient(deployerAccount);
 
-  // Resolve owner address
   const envOwner = process.env.OWNER_EVM_ADDRESS;
-  const owner = (envOwner && isAddress(envOwner)
-    ? envOwner
-    : deployerAccount.address) as `0x${string}`;
+  const owner = (
+    envOwner && isAddress(envOwner) ? envOwner : deployerAccount.address
+  ) as `0x${string}`;
 
-  // Resolve agent address from AGENT_MNEMONIC
   let agent: `0x${string}`;
   if (process.env.AGENT_MNEMONIC) {
     const derivedAgentEvm = await deriveEvmAccount(process.env.AGENT_MNEMONIC, {

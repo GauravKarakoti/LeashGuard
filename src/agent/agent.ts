@@ -40,7 +40,7 @@ export function loadVaultDeployment() {
   if (fs.existsSync(DEPLOYMENT_FILE)) {
     fileData = JSON.parse(fs.readFileSync(DEPLOYMENT_FILE, "utf-8"));
   }
-  const address = fileData.address as `0x${string}` | undefined;
+  const address = (fileData.address) as `0x${string}` | undefined;
 
   if (!address) {
     throw new Error(
@@ -72,10 +72,7 @@ function parseInvoiceAmountWei(inv: ApiInvoice): bigint {
 }
 
 async function fetchPendingInvoicesFromApi(): Promise<ApiInvoice[]> {
-  const apiUrl = process.env.VITE_API_BASE_URL;
-  if (!apiUrl) {
-    throw new Error("Missing VITE_API_BASE_URL.");
-  }
+  const apiUrl = process.env.VITE_API_BASE_URL ?? "http://localhost:3001";
 
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -115,7 +112,9 @@ async function getMnemonicForVault(
 async function processInvoices() {
   const evmRpcUrl = process.env.VITE_QORE_EVM_RPC_URL;
   if (!evmRpcUrl) {
-    throw new Error("Missing VITE_QORE_EVM_RPC_URL in .env.");
+    throw new Error(
+      "Missing VITE_QORE_EVM_RPC_URL in .env.",
+    );
   }
 
   createClient({

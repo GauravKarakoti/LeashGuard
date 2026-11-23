@@ -13,9 +13,16 @@
     "db:update": "prisma db update",
     "db:emit": "prisma contract emit",
     "server": "tsx src/server/index.ts",
-    "deploy": "hardhat run scripts/deploy.ts --network qorechainTestnet"
+    "agent": "tsx src/agent/agent.ts",
+    "pool": "tsx scripts/pool.ts",
+    "pqc:setup": "tsx scripts/pqc-and-window.ts",
+    "deploy": "hardhat run scripts/deploy.ts --network qorechainTestnet",
+    "qore:status": "qore status",
+    "qore:keys": "qore keys list",
+    "qore:scaffold": "npx create-qorechain-dapp"
   },
   "dependencies": {
+    "@cosmjs/stargate": "^0.32.4",
     "@prisma/orm-postgres": "^8.0.0-rc.24",
     "@qorechain/evm": "^0.14.0",
     "@qorechain/qoresign": "^0.2.0",

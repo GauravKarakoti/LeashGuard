@@ -21,6 +21,8 @@ import {
   createClient,
   evmToQor,
   fromBase,
+  openEvmWindowMsg,
+  qorechainRegistry,
   type QoreChainClient,
 } from "@qorechain/sdk";
 import {
@@ -29,6 +31,11 @@ import {
   erc20,
   type Erc20Metadata,
 } from "@qorechain/evm";
+import {
+  getQorexNative,
+  qorexSignAndBroadcast,
+  QORECHAIN_TESTNET_CHAIN_ID,
+} from "@qorechain/qorex-types";
 
 import AgentVault from "../artifacts/contracts/AgentVault.sol/AgentVault.json";
 import { useQoreX } from "./hooks/useQoreX";
@@ -64,6 +71,15 @@ interface GeneratedBotCredentials {
   botAddress: Address;
   botQorAddress: string;
   botMnemonic: string;
+}
+
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
 
 function vaultStorageKey(ownerAddr: string): string {
@@ -272,11 +288,74 @@ function PersonalAgentDeployer({
   const { data: walletClient } = useWalletClient();
   const [perTxQor, setPerTxQor] = useState("0.5");
   const [dailyQor, setDailyQor] = useState("5");
+  const [evmWindowOpened, setEvmWindowOpened] = useState(false);
   const [generatedBot, setGeneratedBot] =
     useState<GeneratedBotCredentials | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  async function handleOpenEvmWindowViaQoreX() {
+    setMsg(null);
+    setErr(null);
+
+    const native = getQorexNative();
+    if (!native) {
+      setErr(
+        "QoreX native provider not detected. Unlock or install the QoreX extension first.",
+      );
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await native.enable(QORECHAIN_TESTNET_CHAIN_ID);
+      const key = await native.getKey(QORECHAIN_TESTNET_CHAIN_ID);
+
+      const encodeObj = openEvmWindowMsg({
+        sender: key.bech32Address,
+        blocks: 3600,
+        maxTxs: 100,
+        maxValue: "100000000",
+        nativeOnly: false,
+        validators: [],
+        stakingValidators: [],
+        ibcReceivers: [],
+      });
+
+      const encodedBytes = qorechainRegistry().encode(encodeObj);
+      const encodedBase64 = uint8ToBase64(encodedBytes);
+
+      const broadcastRes = await qorexSignAndBroadcast(
+        {
+          chainId: QORECHAIN_TESTNET_CHAIN_ID,
+          messages: [
+            {
+              typeUrl: encodeObj.typeUrl,
+              value: encodedBase64,
+            },
+          ],
+          memo: "LeashGuard: Open scoped PQC EVM window",
+        },
+        { native },
+      );
+
+      if (broadcastRes.code !== 0) {
+        throw new Error(
+          `QoreX broadcast failed with code ${broadcastRes.code}`,
+        );
+      }
+
+      setEvmWindowOpened(true);
+      setMsg(
+        `EVM window opened via QoreX (shield: ${broadcastRes.shield}, tx: ${broadcastRes.txHash}).`,
+      );
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleDeployPersonalVault(e: React.FormEvent) {
     e.preventDefault();
@@ -366,16 +445,40 @@ function PersonalAgentDeployer({
     <section className="rounded-xl border border-slate-800 bg-slate-900/50 p-5">
       <h2 className="text-base font-semibold">Your Private Agent Vault</h2>
       <p className="text-xs text-slate-400">
-        Deploy your isolated <code>AgentVault</code> and generate your own bot
-        wallet (`qor1...` and `0x...`).
+        Open your PQC EVM window via QoreX, then deploy your isolated{" "}
+        <code>AgentVault</code> and generate your bot wallet.
       </p>
 
       {!isConnected || !connectedAddress ? (
         <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-400">
-          Connect your QoreX wallet to deploy or access your personal vault.
+          Connect your QoreX wallet to open an EVM window and deploy your
+          personal vault.
         </div>
       ) : (
         <>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs">
+            <div>
+              <span className="font-medium text-slate-200">
+                QoreX EVM Window
+              </span>
+              <p className="text-slate-400">
+                {evmWindowOpened
+                  ? "EVM window authorized via QoreX."
+                  : "Authorize your PQC EVM window before deploying your vault and bot."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void handleOpenEvmWindowViaQoreX();
+              }}
+              disabled={busy}
+              className="rounded-md border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-xs font-medium text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-40"
+            >
+              {busy ? "Signing in QoreX…" : "Open EVM Window via QoreX"}
+            </button>
+          </div>
+
           {myVaultAddress ? (
             <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">
               Your Vault: <span className="font-mono">{myVaultAddress}</span>
@@ -644,8 +747,8 @@ function FundingAndInvoicesPanel({
             Deposit QOR directly into vault{" "}
             <code className="font-mono text-slate-300">
               {shortAddr(vaultAddress)}
-            </code>{" "}
-            or credit an existing tx hash.
+            </code>
+            .
           </p>
         </div>
         <button
@@ -678,30 +781,28 @@ function FundingAndInvoicesPanel({
       )}
 
       <div className="mt-5 grid gap-6 md:grid-cols-2">
-        <div className="space-y-5">
-          <form onSubmit={handleDirectDeposit} className="space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Direct QOR Deposit
-            </h3>
-            <div className="flex gap-2">
-              <input
-                value={directDepositQor}
-                onChange={(e) => setDirectDepositQor(e.target.value)}
-                inputMode="decimal"
-                placeholder="Amount in QOR (e.g. 1.0)"
-                disabled={busy}
-                className="flex-1 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 disabled:opacity-50"
-              />
-              <button
-                type="submit"
-                disabled={busy}
-                className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-40"
-              >
-                {busy ? "Sending…" : "Deposit QOR"}
-              </button>
-            </div>
-          </form>
-        </div>
+        <form onSubmit={handleDirectDeposit} className="space-y-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Direct QOR Deposit
+          </h3>
+          <div className="flex gap-2">
+            <input
+              value={directDepositQor}
+              onChange={(e) => setDirectDepositQor(e.target.value)}
+              inputMode="decimal"
+              placeholder="Amount in QOR (e.g. 1.0)"
+              disabled={busy}
+              className="flex-1 rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-500 disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={busy}
+              className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-emerald-400 disabled:opacity-40"
+            >
+              {busy ? "Sending…" : "Deposit QOR"}
+            </button>
+          </div>
+        </form>
 
         <form onSubmit={handleCreateInvoice} className="space-y-3">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -861,7 +962,11 @@ function VaultOverview({
         <div className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
           <Stat
             label="Bot Agent (qor1)"
-            value={botQor ?? shortAddr(agent as Address)}
+            value={
+              botQor
+                ? `${botQor.slice(0, 10)}…${botQor.slice(-6)}`
+                : shortAddr(agent as Address)
+            }
             mono
           />
           <Stat

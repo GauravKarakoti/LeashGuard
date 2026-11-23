@@ -31,7 +31,6 @@ export function PayeeManager({
     hash: txHash,
   });
 
-  // Stream approvals/revocations from events
   useWatchContractEvent({
     address: vaultAddress,
     abi: vaultAbi,
@@ -56,7 +55,9 @@ export function PayeeManager({
       const removed = new Set(
         logs
           .map((l) =>
-            (l as unknown as { args?: { payee?: Address } }).args?.payee?.toLowerCase(),
+            (
+              l as unknown as { args?: { payee?: Address } }
+            ).args?.payee?.toLowerCase(),
           )
           .filter((addr): addr is string => Boolean(addr)),
       );
@@ -97,7 +98,9 @@ export function PayeeManager({
     setValidationError(null);
 
     if (!canEdit) {
-      setValidationError("Connect with the vault owner account to approve payees.");
+      setValidationError(
+        "Connect with the vault owner account to approve payees.",
+      );
       return;
     }
 

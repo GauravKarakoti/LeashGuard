@@ -8,7 +8,7 @@ import cors from "cors";
 
 const app = express();
 app.use(express.json());
-app.use(cors())
+app.use(cors());
 
 const PORT = Number(process.env.API_PORT ?? 3001);
 const API_KEY = process.env.INVOICES_API_KEY;
@@ -27,7 +27,9 @@ function getEvmClient(): Promise<EvmClient> {
   if (!evmClientPromise) {
     const evmRpcUrl = process.env.VITE_QORE_EVM_RPC_URL;
     if (!evmRpcUrl) {
-      throw new Error("Missing VITE_QORE_EVM_RPC_URL in environment.");
+      throw new Error(
+        "Missing VITE_QORE_EVM_RPC_URL in environment.",
+      );
     }
     evmClientPromise = createEvmClient({
       endpoints: { evmRpc: evmRpcUrl },
@@ -139,7 +141,6 @@ app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-// Register or update a user's deployed vault + bot address + encrypted bot mnemonic in DB
 app.post("/api/agents", async (req: Request, res: Response) => {
   try {
     const { vaultAddress, ownerAddress, botAddress, botMnemonic } = req.body as {
@@ -213,7 +214,6 @@ app.post("/api/agents", async (req: Request, res: Response) => {
   }
 });
 
-// Fetch vaults owned by a specific ownerAddress only (mutually exclusive per user)
 app.get("/api/agents", async (req: Request, res: Response) => {
   try {
     const rawOwner = req.query.ownerAddress;
@@ -253,7 +253,6 @@ app.get("/api/agents", async (req: Request, res: Response) => {
   }
 });
 
-// Agent fetches pending/retryable invoices across user vaults
 app.get(
   "/api/invoices/pending",
   requireApiKey,
@@ -308,7 +307,6 @@ app.get(
   },
 );
 
-// Create a real invoice for a user's vault
 app.post("/api/invoices", async (req: Request, res: Response) => {
   try {
     const { invoiceId, vaultAddress, userAddress, payee, amountQor, amountWei } =
@@ -388,7 +386,6 @@ app.post("/api/invoices", async (req: Request, res: Response) => {
   }
 });
 
-// Verify on-chain deposit tx into user's vault/bot and credit their balance
 app.post("/api/funding", async (req: Request, res: Response) => {
   try {
     const { vaultAddress, userAddress, txHash } = req.body as {
@@ -518,7 +515,6 @@ app.post("/api/funding", async (req: Request, res: Response) => {
   }
 });
 
-// Check a user's funded, spent, and remaining balance for a vault
 app.get(
   "/api/funding/:vaultAddress/:userAddress",
   async (req: Request, res: Response) => {

@@ -7,21 +7,35 @@ import {
   derivePqcLegacy,
   directSignerFromPrivateKey,
   fetchPqcStatus,
-  pqcStatusPublicKey,
   msg,
+  pqcStatusPublicKey,
   qorechainRegistry,
   signAndBroadcastHybrid,
   toBase,
   type PqcKeypair,
 } from "@qorechain/sdk";
 
-const TARGET_QOR_ADDRESS = "qor1qnaxe49mthxw2ftj4xrzy9ll5r2f09g4nejf7c";
+const TARGET_QOR_ADDRESS = (
+  process.env.QORE_SENDER_ADDRESS ?? "qor1qnaxe49mthxw2ftj4xrzy9ll5r2f09g4nejf7c"
+).toLowerCase();
 
 const eq = (a: Uint8Array, b: Uint8Array) =>
   a.length === b.length && a.every((v, i) => v === b[i]);
 
+interface PoolInfo {
+  id: string;
+  token_a?: string;
+  token_b?: string;
+  tokenA?: string;
+  tokenB?: string;
+}
+
 async function main() {
-  const mnemonic = process.env.OWNER_MNEMONIC!;
+  const mnemonic = process.env.OWNER_MNEMONIC;
+  if (!mnemonic) {
+    throw new Error("Missing OWNER_MNEMONIC in environment.");
+  }
+
   const restUrl = process.env.QORE_REST_URL ?? "https://api-testnet.qore.host";
   const rpcUrl = process.env.QORE_RPC_URL ?? "https://rpc-testnet.qore.host";
   const evmRpcUrl =
@@ -32,17 +46,18 @@ async function main() {
     endpoints: { rest: restUrl, rpc: rpcUrl, evmRpc: evmRpcUrl },
   });
 
-  // Your wallet uses the NATIVE path m/44'/118'/0'/0/0 (not the unified/EVM one).
+  // Native derivation path m/44'/118'/0'/0/0
   const account = await deriveNativeAccount(mnemonic, { accountIndex: 0 });
-  if (account.address !== TARGET_QOR_ADDRESS) {
-    throw new Error(`Derived ${account.address}, expected ${TARGET_QOR_ADDRESS}`);
+  if (account.address.toLowerCase() !== TARGET_QOR_ADDRESS) {
+    throw new Error(
+      `Derived ${account.address}, expected ${TARGET_QOR_ADDRESS}`,
+    );
   }
   console.log("Matched native account:", account.address);
 
-  // Classical signer from the native private key.
   const signer = await directSignerFromPrivateKey(account.privateKey, "qor");
 
-  // Work out which PQC key (if any) is registered for this account.
+  // Resolve PQC keypair (canonical vs legacy) and whether auto-registration is needed
   const status = await fetchPqcStatus({ rest: restUrl, address: account.address });
   const candidates: Array<{ name: string; kp: PqcKeypair }> = [
     { name: "canonical", kp: derivePqcCanonical(account.address, mnemonic) },
@@ -63,40 +78,45 @@ async function main() {
     console.log(`Registered PQC key matches the ${match.name} derivation.`);
     pqcKeypair = match.kp;
   } else {
-    console.log("No PQC key registered yet; embedding the canonical key in this tx for auto-registration.");
+    console.log(
+      "No PQC key registered yet; embedding the canonical key in this tx for auto-registration.",
+    );
     pqcKeypair = candidates[0].kp;
     includePqcPublicKey = true;
   }
 
-  // Pick an AMM pool.
-  const poolsRes = await client.rest.get<{
-    pools?: Array<{
-      id: string;
-      token_a?: string;
-      token_b?: string;
-      tokenA?: string;
-      tokenB?: string;
-    }>;
-  }>("/qorechain/amm/v1/pools");
+  // Pick an AMM pool (optionally pinned via QORE_POOL_ID)
+  const poolsRes = await client.rest.get<{ pools?: PoolInfo[] }>(
+    "/qorechain/amm/v1/pools",
+  );
+  const pools = poolsRes.pools ?? [];
+  const pool = process.env.QORE_POOL_ID
+    ? pools.find((p) => String(p.id) === String(process.env.QORE_POOL_ID))
+    : pools[0];
 
-  const pool = poolsRes.pools?.[0];
-  if (!pool) throw new Error("No AMM pools found on testnet");
-
-  const denomIn = pool.token_a ?? pool.tokenA ?? "uqor";
-  const denomOut =
-    (pool.token_b ?? pool.tokenB) === denomIn
-      ? (pool.token_a ?? pool.tokenA)!
-      : (pool.token_b ?? pool.tokenB)!;
-
-  // Balance check.
-  const balRes = await client.rest.getBalance(account.address, denomIn);
-  const currentAmt = BigInt(balRes.balance?.amount ?? "0");
-  const swapAmt = BigInt(toBase("0.01", { exponent: 6 }));
-  if (currentAmt < swapAmt) {
-    throw new Error(`${account.address} has ${currentAmt} ${denomIn}, needs at least ${swapAmt}.`);
+  if (!pool) {
+    throw new Error("No matching AMM pool found on testnet");
   }
 
-  // Account number + sequence.
+  const denomIn = process.env.QORE_SWAP_DENOM_IN ?? pool.token_a ?? pool.tokenA ?? "uqor";
+  const tokenB = pool.token_b ?? pool.tokenB ?? "uqor";
+  const tokenA = pool.token_a ?? pool.tokenA ?? "uqor";
+  const denomOut = denomIn === tokenA ? tokenB : tokenA;
+
+  // Balance check
+  const balRes = await client.rest.getBalance(account.address, denomIn);
+  const currentAmt = BigInt(balRes.balance?.amount ?? "0");
+  const requestedAmt = BigInt(
+    process.env.QORE_SWAP_AMOUNT_UQOR ?? toBase("0.01", { exponent: 6 }),
+  );
+
+  if (currentAmt < requestedAmt) {
+    throw new Error(
+      `${account.address} has ${currentAmt} ${denomIn}, needs at least ${requestedAmt}.`,
+    );
+  }
+
+  // Account number + sequence
   const authRes = await client.rest.get<{
     account?: {
       account_number?: string;
@@ -111,7 +131,7 @@ async function main() {
   const swapMsg = msg.amm.swapExactIn({
     sender: account.address,
     poolId: String(pool.id),
-    tokenIn: { denom: denomIn, amount: swapAmt.toString() },
+    tokenIn: { denom: denomIn, amount: requestedAmt.toString() },
     denomOut,
     minOut: "1",
   });

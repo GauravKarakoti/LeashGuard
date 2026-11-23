@@ -24,11 +24,12 @@ contract PqcKeyChecker {
     function checkPqcKey(address account)
         external
         view
-        returns (bool registered, uint8 algorithmId)
+        returns (bool registered, uint8 algorithmId, bytes memory pubkey)
     {
-        (registered, algorithmId, ) = IPqcKeyStatusPrecompile(
-            PQC_KEY_STATUS_PRECOMPILE
-        ).pqcKeyStatus(account);
+        return
+            IPqcKeyStatusPrecompile(PQC_KEY_STATUS_PRECOMPILE).pqcKeyStatus(
+                account
+            );
     }
 
     function requirePqcKey(address account) external returns (uint8 algorithmId) {
