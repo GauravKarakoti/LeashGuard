@@ -772,8 +772,8 @@ function Header({
     <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur">
       <div className="mx-20 flex items-center justify-between gap-4 px-4 py-4">
         <div className="flex items-center gap-3">
-          <div className="grid h-9 w-9 place-items-center rounded-lg bg-emerald-500 font-black text-slate-950">
-            LG
+          <div className="grid h-12 w-12 place-items-center rounded-lg font-black text-slate-950">
+            <img src="/logo.png" alt="Logo" />
           </div>
           <div>
             <h1 className="text-lg font-semibold leading-tight">LeashGuard</h1>
