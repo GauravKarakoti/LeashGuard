@@ -1,13 +1,13 @@
 {
   "network": "qorechain-diana",
   "contractName": "AgentVault",
-  "address": "0x46a43e08001c83447e990247c3c74eb387530185",
-  "txHash": "0x6e76793605e5a0b2d610741d8141f7bb687df89fd04177e73031fbfea13e9cc6",
+  "address": "0x001eeb5c946307d5d85be39e7583738b3b587b8f",
+  "txHash": "0x8a1b23c4e8a77e57052ab69473a51f696162dc7e713fe45d95483769bdf628b1",
   "owner": "0x848095053347C364EB3FA31c86F16b23FCE6992d",
-  "agent": "0xbd022b9a76caD6435817eC3e53729c25d22Fac08",
+  "agent": "0xbd022b9a76cad6435817ec3e53729c25d22fac08",
   "perTxLimit": "500000000000000000",
   "dailyLimit": "5000000000000000000",
-  "deployedAt": "2026-11-23T08:30:21.058Z",
+  "deployedAt": "2026-11-24T07:08:04.106Z",
   "abi": [
     {
       "inputs": [
